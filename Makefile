@@ -1,9 +1,9 @@
 
 # Verilator Makefile for APB4 register slave
 
-TOP      = tb_timer
-RTL      = rtl/timer.sv
-TB       = tb/tb_timer.sv
+TOP      = tb_irq_aggregator
+RTL      = rtl/irq_aggregator.sv
+TB       = tb/tb_irq_aggregator.sv
 
 OBJ_DIR  = obj_dir
 EXE      = $(OBJ_DIR)/V$(TOP)
