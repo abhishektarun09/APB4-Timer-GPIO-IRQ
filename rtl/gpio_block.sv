@@ -2,8 +2,8 @@ module gpio_block #(
     parameter int unsigned WIDTH = 8,
     parameter bit          ENABLE_FALLING_EDGE = 1'b0
 ) (
-    input  logic                 clk,
-    input  logic                 rstn,
+    input  logic                 PCLK,
+    input  logic                 PRESETn,
 
     // Physical GPIO interface
     input  logic [WIDTH-1:0]     gpio_in,
@@ -54,8 +54,8 @@ module gpio_block #(
     // Interrupt is asserted when any pin has pending status.
     assign interrupt = |interrupt_status;
 
-    always_ff @(posedge clk) begin
-        if (!rstn) begin
+    always_ff @(posedge PCLK or negedge PRESETn) begin
+        if (!PRESETn) begin
             sync_ff1        <= '0;
             sync_ff2        <= '0;
             previous_input  <= '0;
