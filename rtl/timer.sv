@@ -1,8 +1,8 @@
 module timer #(
     parameter int WIDTH = 32
 ) (
-    input  logic             clk,
-    input  logic             reset_n,
+    input  logic             PCLK,
+    input  logic             PRESETn,
 
     input  logic             timer_enable,
     input  logic [WIDTH-1:0] prescaler_divider,
@@ -23,7 +23,7 @@ module timer #(
         tick = 1'b0;
 
         if (timer_enable && timer_active) begin
-            if (prescaler_divider <= 1)
+            if (prescaler_divider <= {{(WIDTH-1){1'b0}}, 1'b1})
                 tick = 1'b1;
             else if (prescaler_counter ==
                     prescaler_divider - 1'b1)
@@ -31,8 +31,8 @@ module timer #(
         end
     end
 
-    always_ff @(posedge clk) begin
-        if (!reset_n) begin
+    always_ff@(posedge PCLK or negedge PRESETn) begin
+        if (!PRESETn) begin
             prescaler_counter <= '0;
         end else if (!timer_enable || !timer_active || tick) begin
             prescaler_counter <= '0;
@@ -41,8 +41,8 @@ module timer #(
         end
     end
 
-    always_ff @(posedge clk) begin
-        if (!reset_n) begin
+    always_ff @(posedge PCLK or negedge PRESETn) begin
+        if (!PRESETn) begin
             timer_counter  <= '0;
             timer_active   <= 1'b0;
             expiry_pulse   <= 1'b0;
