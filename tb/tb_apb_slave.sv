@@ -1,271 +1,214 @@
-
 `timescale 1ns/1ps
 
 module tb_apb_slave;
+    localparam int GPIO_WIDTH  = 8;
+    localparam int TIMER_WIDTH = 32;
 
-    logic        PCLK;
-    logic        PRESETn;
-    logic [31:0] PADDR;
-    logic        PSEL;
-    logic        PENABLE;
-    logic        PWRITE;
-    logic [31:0] PWDATA;
-    logic [3:0]  PSTRB;
-    logic [2:0]  PPROT;
-
-    logic [31:0] PRDATA;
-    logic        PREADY;
-    logic        PSLVERR;
-
-    integer wait_cycles;
-
-    // -----------------------------------------------
-    // DUT
-    // -----------------------------------------------
-    apb_slave dut (
-        .PCLK    (PCLK),
-        .PRESETn (PRESETn),
-        .PADDR   (PADDR),
-        .PSEL    (PSEL),
-        .PENABLE (PENABLE),
-        .PWRITE  (PWRITE),
-        .PWDATA  (PWDATA),
-        .PSTRB   (PSTRB),
-        .PPROT   (PPROT),
-        .PRDATA  (PRDATA),
-        .PREADY  (PREADY),
-        .PSLVERR (PSLVERR)
-    );
-
-    // 100 MHz clock: period = 10 ns
-    initial PCLK = 1'b0;
+    logic PCLK = 1'b0;
+    logic PRESETn = 1'b1;
     always #5 PCLK = ~PCLK;
 
-    // -----------------------------------------------
-    // APB WRITE TASK
-    // -----------------------------------------------
-    task automatic apb_write(
-        input logic [31:0] addr,
-        input logic [31:0] data,
-        input logic [3:0]  strb,
-        input logic        expect_error
+    logic [31:0] PADDR;
+    logic PSEL, PENABLE, PWRITE;
+    logic [31:0] PWDATA;
+    logic [3:0] PSTRB;
+    logic [2:0] PPROT;
+    logic [31:0] PRDATA;
+    logic PREADY, PSLVERR;
+
+    logic [GPIO_WIDTH-1:0] gpio_direction, gpio_irq_enable;
+    logic timer_enable, timer_periodic_mode, timer_irq_enable;
+    logic [TIMER_WIDTH-1:0] timer_reload_value, timer_prescaler_divider;
+
+    logic [GPIO_WIDTH-1:0] gpio_input_data, gpio_output_data, gpio_irq_status;
+    logic [GPIO_WIDTH-1:0] gpio_output_write_data, gpio_irq_clear_data;
+    logic gpio_output_write_en, gpio_irq_clear_en;
+
+    logic [TIMER_WIDTH-1:0] timer_count;
+    logic timer_active, timer_expiry_pending, timer_clear_expiry;
+    logic timer_irq_level, gpio_irq_level;
+
+    int tests_passed = 0;
+
+    apb_slave #(.GPIO_WIDTH(GPIO_WIDTH), .TIMER_WIDTH(TIMER_WIDTH)) dut (
+
+        .PCLK(PCLK), 
+        .PRESETn(PRESETn),
+        .PADDR(PADDR), 
+        .PSEL(PSEL), 
+        .PENABLE(PENABLE), 
+        .PWRITE(PWRITE),
+        .PWDATA(PWDATA), 
+        .PSTRB(PSTRB), 
+        .PPROT(PPROT),
+        .PRDATA(PRDATA), 
+        .PREADY(PREADY), 
+        .PSLVERR(PSLVERR),
+
+        .gpio_direction(gpio_direction), 
+        .gpio_irq_enable(gpio_irq_enable),
+        .timer_enable(timer_enable),
+        .timer_periodic_mode(timer_periodic_mode),
+        .timer_irq_enable(timer_irq_enable), 
+        .timer_reload_value(timer_reload_value),
+        .timer_prescaler_divider(timer_prescaler_divider),
+
+        .gpio_input_data(gpio_input_data), 
+        .gpio_output_data(gpio_output_data),
+        .gpio_irq_status(gpio_irq_status),
+        .gpio_output_write_data(gpio_output_write_data),
+        .gpio_output_write_en(gpio_output_write_en),
+        .gpio_irq_clear_data(gpio_irq_clear_data), 
+        .gpio_irq_clear_en(gpio_irq_clear_en),
+
+        .timer_count(timer_count), 
+        .timer_active(timer_active),
+        .timer_expiry_pending(timer_expiry_pending), 
+        .timer_clear_expiry(timer_clear_expiry),
+
+        .timer_irq_level(timer_irq_level), 
+        .gpio_irq_level(gpio_irq_level)
     );
-        begin
-            // Setup phase
-            @(negedge PCLK);
-            PSEL    = 1'b1;
-            PENABLE = 1'b0;
-            PWRITE  = 1'b1;
-            PADDR   = addr;
-            PWDATA  = data;
-            PSTRB   = strb;
 
-            // Access phase
-            @(negedge PCLK);
-            PENABLE = 1'b1;
-
-            wait_cycles = 0;
-            #1;
-
-            // Wait dynamically until slave is ready.
-            while (PREADY !== 1'b1) begin
-                wait_cycles = wait_cycles + 1;
-                @(negedge PCLK);
-                #1;
-            end
-
-            if (PSLVERR !== expect_error)
-                $fatal(1,
-                    "WRITE ERROR mismatch: addr=%h err=%b expected=%b",
-                    addr, PSLVERR, expect_error);
-
-            // Transfer completes at this rising edge.
-            @(posedge PCLK);
-            @(negedge PCLK);
-
-            // Return bus to idle.
-            PSEL    = 1'b0;
-            PENABLE = 1'b0;
-            PWRITE  = 1'b0;
-            PSTRB   = 4'b0000;
-
-            $display(
-                "[WRITE] addr=%h data=%h strb=%b err=%b waits=%0d",
-                addr, data, strb, expect_error, wait_cycles
-            );
+    task automatic check(input logic condition, input string message);
+        if (condition !== 1'b1) begin
+            $error("FAIL: %s", message);
+            $fatal(1);
         end
+        tests_passed++;
+        $display("PASS: %s", message);
     endtask
 
-    // -----------------------------------------------
-    // APB READ TASK
-    // -----------------------------------------------
-    task automatic apb_read(
-        input logic [31:0] addr,
-        input logic [31:0] expected_data,
-        input logic        expect_error
-    );
-        begin
-            // Setup phase
-            @(negedge PCLK);
-            PSEL    = 1'b1;
-            PENABLE = 1'b0;
-            PWRITE  = 1'b0;
-            PADDR   = addr;
-            PWDATA  = 32'h0000_0000;
-            PSTRB   = 4'b0000;
-
-            // Access phase
-            @(negedge PCLK);
-            PENABLE = 1'b1;
-
-            wait_cycles = 0;
-            #1;
-
-            // Remain in access until PREADY is asserted.
-            while (PREADY !== 1'b1) begin
-                wait_cycles = wait_cycles + 1;
-                @(negedge PCLK);
-                #1;
-            end
-
-            if (PSLVERR !== expect_error)
-                $fatal(1,
-                    "READ ERROR mismatch: addr=%h err=%b expected=%b",
-                    addr, PSLVERR, expect_error);
-
-            if (PRDATA !== expected_data)
-                $fatal(1,
-                    "READ DATA mismatch: addr=%h got=%h expected=%h",
-                    addr, PRDATA, expected_data);
-
-            // Complete the transfer.
-            @(posedge PCLK);
-            @(negedge PCLK);
-
-            // Return bus to idle.
-            PSEL    = 1'b0;
-            PENABLE = 1'b0;
-
-            $display(
-                "[READ ] addr=%h data=%h err=%b waits=%0d",
-                addr, PRDATA, expect_error, wait_cycles
-            );
-        end
-    endtask
-
-    // -----------------------------------------------
-    // TEST SEQUENCE
-    // -----------------------------------------------
-    initial begin
-        PRESETn = 1'b0;
-        PADDR   = 32'h0;
-        PSEL    = 1'b0;
-        PENABLE = 1'b0;
-        PWRITE  = 1'b0;
-        PWDATA  = 32'h0;
-        PSTRB   = 4'h0;
-        PPROT   = 3'b000;
-
-        $display("----------------------------------");
-        $display(" APB4 REGISTER SLAVE TEST START");
-        $display("----------------------------------");
-
-        $dumpfile("waveform.vcd");
-        $dumpvars(0, tb_apb_slave);
-
-        // Synchronous reset
-        repeat (3) @(posedge PCLK);
+    task automatic idle_bus;
         @(negedge PCLK);
-        PRESETn = 1'b1;
+        PSEL = 0; PENABLE = 0; PWRITE = 0;
+        PADDR = '0; PWDATA = '0; PSTRB = '0; PPROT = '0;
+    endtask
 
-        // -------------------------------------------
-        // Test 1: CTRL full-word write/read
-        // -------------------------------------------
-        apb_write(32'h00, 32'h1234_5678, 4'hF, 1'b0);
-        apb_read (32'h00, 32'h1234_5678, 1'b0);
+    // APB transfer: drive SETUP, then ACCESS; check response before the
+    // completing rising edge. A transfer with an error must not commit.
+    task automatic apb_transfer(
+        input logic write_transfer,
+        input logic [31:0] address,
+        input logic [31:0] write_data,
+        input logic [3:0] strobe,
+        input logic expect_error,
+        output logic [31:0] read_data
+    );
+        @(negedge PCLK);
+        PSEL = 1; PENABLE = 0; PWRITE = write_transfer;
+        PADDR = address; PWDATA = write_data; PSTRB = strobe; PPROT = 3'b000;
+        @(negedge PCLK);
+        PENABLE = 1;
+        #1;
+        check(PREADY === 1'b1, "PREADY asserted in APB access phase");
+        check(PSLVERR === expect_error, "PSLVERR matches expected response");
+        if (write_transfer && !expect_error && address == 32'h08) begin
+            check(gpio_output_write_en === 1'b1, "GPIO output write strobe asserted during APB access");
+            check(gpio_output_write_data[7:0] == ((gpio_output_data & ~({8{strobe[0]}})) | (write_data[7:0] & {8{strobe[0]}})), "GPIO output write data merges enabled byte lane");
+        end
+        if (write_transfer && !expect_error && address == 32'h10) begin
+            check(gpio_irq_clear_en === 1'b1, "GPIO IRQ clear strobe asserted during APB access");
+            check(gpio_irq_clear_data[7:0] == write_data[7:0], "GPIO IRQ clear data follows write data");
+        end
+        if (write_transfer && !expect_error && address == 32'h28 && strobe[0] && write_data[1])
+            check(timer_clear_expiry === 1'b1, "timer expiry clear asserted for W1C write");
+        read_data = PRDATA;
+        @(posedge PCLK);
+        #1;
+        @(negedge PCLK);
+        PSEL = 0; PENABLE = 0; PWRITE = 0;
+        PADDR = '0; PWDATA = '0; PSTRB = '0;
+    endtask
 
-        // -------------------------------------------
-        // Test 2: Partial byte write
-        // 0x12345678 -> 0x1234AA78
-        // -------------------------------------------
-        apb_write(32'h00, 32'h0000_AA00, 4'b0010, 1'b0);
-        apb_read (32'h00, 32'h1234_AA78, 1'b0);
+    logic [31:0] rd;
+    initial begin
+        PADDR = '0; PSEL = 0; PENABLE = 0; PWRITE = 0;
+        PWDATA = '0; PSTRB = '0; PPROT = '0;
+        gpio_input_data = 8'hA5;
+        gpio_output_data = 8'h3C;
+        gpio_irq_status = 8'h12;
+        timer_count = 32'h1234_5678;
+        timer_active = 1'b1;
+        timer_expiry_pending = 1'b1;
+        timer_irq_level = 1'b1;
+        gpio_irq_level = 1'b0;
 
-        // -------------------------------------------
-        // Test 3: Scratch register
-        // -------------------------------------------
-        apb_write(32'h08, 32'hDEAD_BEEF, 4'hF, 1'b0);
-        apb_read (32'h08, 32'hDEAD_BEEF, 1'b0);
+        // Assert then release asynchronous active-low reset.
+        #2;
+        PRESETn = 0;
+        #2;
+        check(gpio_direction == 0 && gpio_irq_enable == 0, "reset clears GPIO configuration");
+        check(!timer_enable && !timer_periodic_mode && !timer_irq_enable, "reset clears timer control");
+        check(timer_reload_value == 0, "reset clears timer reload value");
+        check(timer_prescaler_divider == 1, "reset initializes prescaler divider to one");
+        repeat (2) @(negedge PCLK);
+        PRESETn = 1;
 
-        // -------------------------------------------
-        // Test 4: Read-only ID register
-        // -------------------------------------------
-        apb_read (32'h0C, 32'h4150_4234, 1'b0);
-        apb_write(32'h0C, 32'h0000_0000, 4'hF, 1'b1);
-        apb_read (32'h0C, 32'h4150_4234, 1'b0);
+        // Read-only ID and peripheral-provided values.
+        apb_transfer(0, 32'h00, 0, 4'hF, 0, rd);
+        check(rd == 32'h4150_4247, "ID register reads expected constant");
+        apb_transfer(0, 32'h0C, 0, 4'hF, 0, rd);
+        check(rd[7:0] == 8'hA5, "GPIO input register reflects peripheral input");
+        apb_transfer(0, 32'h24, 0, 4'hF, 0, rd);
+        check(rd == 32'h1234_5678, "timer count register reflects peripheral count");
+        apb_transfer(0, 32'h28, 0, 4'hF, 0, rd);
+        check(rd[1:0] == 2'b11, "timer status reports active and expiry pending");
+        apb_transfer(0, 32'h2C, 0, 4'hF, 0, rd);
+        check(rd[1:0] == 2'b01, "IRQ status reports timer and GPIO levels");
 
-        // -------------------------------------------
-        // Test 5: Read-only STATUS register
-        // -------------------------------------------
-        apb_write(32'h04, 32'hFFFF_FFFF, 4'hF, 1'b1);
-        apb_read (32'h04, 32'h0000_0000, 1'b0);
+        // Basic configuration writes and readback.
+        apb_transfer(1, 32'h04, 32'h0000_00A5, 4'h1, 0, rd);
+        check(gpio_direction == 8'hA5, "GPIO direction write updates register");
+        apb_transfer(1, 32'h14, 32'h0000_005A, 4'h1, 0, rd);
+        check(gpio_irq_enable == 8'h5A, "GPIO IRQ enable write updates register");
+        apb_transfer(1, 32'h18, 32'h0000_0007, 4'h1, 0, rd);
+        check(timer_enable && timer_periodic_mode && timer_irq_enable, "timer control bits update");
+        apb_transfer(1, 32'h1C, 32'hCAFE_BABE, 4'hF, 0, rd);
+        check(timer_reload_value == 32'hCAFE_BABE, "timer reload register write updates all byte lanes");
+        apb_transfer(1, 32'h20, 32'h0000_1234, 4'hF, 0, rd);
+        check(timer_prescaler_divider == 32'h0000_1234, "timer prescaler register write updates");
+        apb_transfer(0, 32'h04, 0, 4'hF, 0, rd);
+        check(rd[7:0] == 8'hA5, "GPIO direction register readback");
+        apb_transfer(0, 32'h18, 0, 4'hF, 0, rd);
+        check(rd[2:0] == 3'b111, "timer control register readback");
 
-        // -------------------------------------------
-        // Test 6: Invalid and unaligned addresses
-        // -------------------------------------------
-        apb_read (32'h10_0000, 32'h0000_0000, 1'b1);
-        apb_write(32'h02, 32'hFFFF_FFFF, 4'hF, 1'b1);
+        // Partial byte write must preserve untouched bytes.
+        apb_transfer(1, 32'h1C, 32'h1122_3344, 4'hF, 0, rd);
+        apb_transfer(1, 32'h1C, 32'h0000_AA00, 4'b0010, 0, rd);
+        check(timer_reload_value == 32'h1122_AA44, "PSTRB updates only selected byte lane");
 
-        // -------------------------------------------
-        // Test 7: Dynamic wait states
-        // -------------------------------------------
-        // Program operation duration = 3 cycles.
-        apb_write(32'h18, 32'd3, 4'hF, 1'b0);
+        // Peripheral write/clear strobes and byte-lane behavior.
+        apb_transfer(1, 32'h08, 32'h0000_00C3, 4'h1, 0, rd);
+        #1;
+        check(gpio_output_write_en === 1'b0, "GPIO output write enable deasserts after transfer");
+        apb_transfer(1, 32'h10, 32'h0000_0002, 4'h1, 0, rd);
+        #1;
+        check(gpio_irq_clear_en === 1'b0, "GPIO IRQ clear enable deasserts after transfer");
+        apb_transfer(1, 32'h28, 32'h0000_0002, 4'h1, 0, rd);
+        #1;
+        check(timer_clear_expiry === 1'b0, "timer expiry clear pulse deasserts after transfer");
 
-        // Start the operation.
-        apb_write(32'h10, 32'h0000_0001, 4'b0001, 1'b0);
+        // Invalid and illegal writes must return errors and not alter config.
+        apb_transfer(1, 32'h04, 32'h0000_00A5, 4'h1, 0, rd);
+        apb_transfer(1, 32'h00, 32'hFFFF_FFFF, 4'hF, 1, rd);
+        check(gpio_direction == 8'hA5, "write to read-only ID has no configuration side effect");
+        apb_transfer(0, 32'h30, 0, 4'hF, 1, rd);
+        apb_transfer(0, 32'h05, 0, 4'hF, 1, rd);
+        apb_transfer(1, 32'h30, 32'hFFFF_FFFF, 4'hF, 1, rd);
+        check(gpio_direction == 8'hA5, "invalid accesses do not modify GPIO direction");
 
-        // RESULT must wait until the operation finishes.
-        apb_read(32'h14, 32'h1234_5678, 1'b0);
+        // Outside access phase, PREADY/PSLVERR should be low.
+        idle_bus();
+        #1;
+        check(PREADY === 1'b0 && PSLVERR === 1'b0, "no ready/error response outside APB access phase");
 
-        if (wait_cycles < 1)
-            $fatal(1,
-                "Expected RESULT read to have wait cycles");
-
-        $display(
-            "PASS: RESULT read waited %0d cycles",
-            wait_cycles
-        );
-
-        // -------------------------------------------
-        // Test 8: Different operation duration
-        // -------------------------------------------
-        // Program a longer operation.
-        apb_write(32'h18, 32'd8, 4'hF, 1'b0);
-        apb_write(32'h10, 32'h0000_0001, 4'b0001, 1'b0);
-
-        apb_read(32'h14, 32'h1234_5678, 1'b0);
-
-        if (wait_cycles < 5)
-            $fatal(1,
-                "Long operation did not produce enough wait cycles");
-
-        $display(
-            "PASS: Longer operation waited %0d cycles",
-            wait_cycles
-        );
-
-        $display("----------------------------------");
-        $display(" ALL APB4 TESTS PASSED");
-        $display("----------------------------------");
-
+        $display("\nAll APB slave tests passed: %0d checks", tests_passed);
         $finish;
     end
 
-    // Global timeout to catch a stuck transaction.
     initial begin
-        #10000;
-        $fatal(1, "TIMEOUT: APB transaction did not complete");
+        #20000;
+        $fatal(1, "TIMEOUT: testbench did not finish");
     end
-
 endmodule

@@ -25,8 +25,8 @@ module tb_timer;
     timer #(
         .WIDTH(WIDTH)
     ) dut (
-        .clk                  (clk),
-        .reset_n              (reset_n),
+        .PCLK                 (clk),
+        .PRESETn              (reset_n),
         .timer_enable         (timer_enable),
         .prescaler_divider    (prescaler_divider),
         .timer_reload_value   (timer_reload_value),

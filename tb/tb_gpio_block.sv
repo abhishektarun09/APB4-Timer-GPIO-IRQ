@@ -40,8 +40,8 @@ module tb_gpio_block;
         .WIDTH(WIDTH),
         .ENABLE_FALLING_EDGE(ENABLE_FALLING_EDGE)
     ) dut (
-        .clk                (clk),
-        .rstn               (rstn),
+        .PCLK               (clk),
+        .PRESETn            (rstn),
 
         .gpio_in            (gpio_in),
         .gpio_out           (gpio_out),

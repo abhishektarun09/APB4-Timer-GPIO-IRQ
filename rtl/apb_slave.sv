@@ -122,7 +122,7 @@ module apb_slave #(
             else if (PWRITE && read_only_address)
                 PSLVERR = 1'b1;
         end
-    enda
+    end
 
     assign apb_write_commit = access_phase && PREADY && !PSLVERR && PWRITE;
 
